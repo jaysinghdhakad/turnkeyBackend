@@ -1,0 +1,5 @@
+{
+  "policyName": "Allow Delegated Account to sign transactions",
+  "effect": "EFFECT_ALLOW",
+  "condition": "eth.tx.to == 'Meta-aggregator-manager' && eth.tx.to == 'Meta-aggregator-swap'  || eth.tx.data[0..10] == '0x095ea7b3' &&  data[10..42] == 'Meta-aggregator-manager'"
+}
