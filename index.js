@@ -1,8 +1,10 @@
 const express = require("express");
 const { Turnkey } = require("@turnkey/sdk-server");
 const { generateP256KeyPair, compressRawPublicKey } = require("@turnkey/crypto");
+const mongoose = require("mongoose");
 const { ethers } = require("ethers");
 const cors = require("cors"); // Import the CORS middleware
+const { Schema , model} = require("mongoose");
 require("dotenv").config(); // Ensure you have dotenv to load environment variables
 const app = express();
 app.use(express.json());
@@ -92,15 +94,17 @@ app.post("/api/create-user", async (req, res) => {
   const paddedMetaAggregatorManager = ethers.zeroPadValue(metaAggregatorManager, 32).slice(2)
 
 
-  const policyResponse = await serviceAccountServer.createPolicy({
-    organizationId: organizationId,
-    policyName: "Allow Delegated Account to sign transactions",
-
-    effect: "EFFECT_ALLOW",
-    consensus: `approvers.any(user, user.id == '${response.userIds[0]}')`,
-    condition: `eth.tx.to == '${metaAggregatorManager}' || eth.tx.to == '${metaAggregatorSwap}'  || (eth.tx.data[0..10] == '0x095ea7b3' &&  eth.tx.data[10..42] == '${paddedMetaAggregatorManager}')`,
-    notes: "Allow Delegated Account to sign transactions to specific address",
-  })
+  const policyResponse = await serviceAccountServer.createPolicy(
+    {
+      organizationId: organizationId,
+      policyName: "Allow Delegated Account to sign transactions",
+  
+      effect: "EFFECT_ALLOW",
+      consensus: `approvers.any(user, user.id == '${response.userIds[0]}')`,
+      condition: `eth.tx.to == '${metaAggregatorManager}' || eth.tx.to == '${metaAggregatorSwap}'  || (eth.tx.data[0..10] == '0x095ea7b3' &&  eth.tx.data[10..74] == '${paddedMetaAggregatorManager}')`,
+      notes: "Allow Delegated Account to sign transactions to specific address",
+    }  
+  )
 
   let rootUsersData = []
 
@@ -153,8 +157,96 @@ app.post("/api/get-sub-org-ids", async (req, res) => {
   // const response = await turnkeyServer.getSubOrgIds();
   res.status(200).json(response);
 })
-// Start the server
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+
+
+const WalletSchema = new Schema(
+  {
+    userID: { type: String, required: true },
+    username: { type: String, required: true },
+    walletAddress: { type: String, required: true },
+    publicKey:{ type: String, required: true },
+    privateKey:{ type: String, required: true },
+    subOrgID:{ type: String, required: true },
+    walletID:{ type: String, required: true },
+  },
+  { versionKey: false, timestamps: true },
+)
+
+const Wallet = model('Wallet', WalletSchema, 'Wallet')
+
+
+app.get("/api/get-wallet/:userID", async (req, res) => {
+  try {
+    const { userID } = req.params;
+    console.log("🚀 ~ app.get ~ userID:", userID)
+    
+    if (!userID) {
+      return res.status(400).json({ error: "UserID is required" });
+    }
+
+    const wallet = await Wallet.findOne({ userID });
+    
+    if (!wallet) {
+      return res.status(404).json({ error: "Wallet not found" });
+    }
+
+    res.status(200).json(wallet);
+  } catch (error) {
+    console.error("Error fetching wallet:", error);
+    res.status(500).json({ error: error.message });
+  }
 });
+
+app.post("/api/add-wallet", async (req, res) => {
+  try {
+    const { userID, username, walletAddress, publicKey, privateKey, subOrgID, walletID } = req.body;
+    
+    // Validate required fields
+    if (!userID || !username || !walletAddress || !publicKey || !privateKey || !subOrgID || !walletID) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const existingUser = await Wallet.findOne({ userID })
+    if (existingUser) {
+      return res.status(200).json({ message: 'User already exists' });
+    }
+    console.log("🚀 ~ app.post ~ existingUser:", existingUser)
+
+    const newWallet = new Wallet({
+      userID,
+      username,
+      walletAddress: walletAddress.toLowerCase(),
+      publicKey,
+      privateKey,
+      subOrgID,
+      walletID,
+    })
+
+    await newWallet.save()
+
+    res.status(201).json(newWallet);
+  } catch (error) {
+    console.error("Error adding wallet:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+// Start the server
+const PORT = process.env.PORT || 5010;
+const mongoURI = process.env.MONGO_URI
+
+mongoose
+  .connect(mongoURI, { dbName: process.env.MONGO_DB_NAME })
+  .then(() => {
+    console.log('Connected to MongoDB')
+    app.use(cors());
+    app.use(express.json());
+    app.listen(PORT, () => {
+      console.log(`Server is running on http://localhost:${PORT}`)
+    })
+  })
+  .catch((error) => {
+    console.error('Connection error:', error)
+    process.exit(1) // Exit the process if connection fails
+  })
